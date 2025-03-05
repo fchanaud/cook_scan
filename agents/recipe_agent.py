@@ -1,122 +1,90 @@
-from crewai import Agent
-import requests
-from langchain.tools import Tool
-from typing import List, Dict
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 class RecipeAgent:
-    def __init__(self, api_key):
-        self.api_key = api_key
-        self.base_url = "https://api.spoonacular.com/recipes"
-        
-    def get_tools(self) -> List[Tool]:
-        return [
-            Tool(
-                name="search_recipes",
-                func=self.search_recipes,
-                description="Search for recipes based on available ingredients. Input should be a list of ingredients."
-            ),
-            Tool(
-                name="suggest_substitutions",
-                func=self.suggest_substitutions,
-                description="Suggest possible substitutions for missing ingredients. Input should be an ingredient name."
-            ),
-            Tool(
-                name="rank_recipes",
-                func=self.rank_recipes,
-                description="Rank recipes by simplicity and match percentage. Input should be a list of recipes."
-            ),
-            Tool(
-                name="analyze_nutrition",
-                func=self.analyze_nutrition,
-                description="Analyze nutritional content of recipes. Input should be a recipe ID."
-            )
-        ]
-        
-    def search_recipes(self, ingredients: List[str], min_match_percentage: float = 0.8) -> List[Dict]:
-        """
-        Search for recipes based on available ingredients
-        """
+    def __init__(self, openai_api_key):
+        # Load Recipe1M model and tokenizer
+        self.model_name = "facebook/recipe1m"
+        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
+        self.model = AutoModelForCausalLM.from_pretrained(self.model_name)
+        self.model.eval()  # Set to evaluation mode
+
+    def suggest_recipes(self, ingredients):
         try:
-            # Convert ingredients list to comma-separated string
-            ingredients_str = ','.join(ingredients)
+            # Format ingredients for input
+            ingredients_text = ", ".join(ingredients)
+            input_text = f"Ingredients: {ingredients_text}\nRecipe:"
             
-            # API endpoint for recipe search
-            endpoint = f"{self.base_url}/findByIngredients"
+            # Tokenize input
+            inputs = self.tokenizer(input_text, return_tensors="pt", padding=True)
             
-            params = {
-                "apiKey": self.api_key,
-                "ingredients": ingredients_str,
-                "number": 10,
-                "ranking": 2,  # Maximize used ingredients
-                "ignorePantry": True
-            }
-            
-            response = requests.get(endpoint, params=params)
-            recipes = response.json()
-            
-            # Filter and rank recipes based on match percentage
-            filtered_recipes = []
-            for recipe in recipes:
-                used_count = len(recipe['usedIngredients'])
-                total_required = used_count + len(recipe['missedIngredients'])
-                match_percentage = used_count / total_required
+            # Generate recipe
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    inputs["input_ids"],
+                    max_length=512,
+                    num_return_sequences=3,
+                    temperature=0.7,
+                    do_sample=True,
+                    top_p=0.95
+                )
+
+            # Process and format recipes
+            recipes = []
+            for idx, output in enumerate(outputs):
+                recipe_text = self.tokenizer.decode(output, skip_special_tokens=True)
                 
-                if match_percentage >= min_match_percentage:
-                    recipe['match_percentage'] = match_percentage
-                    filtered_recipes.append(recipe)
-            
-            # Sort by number of ingredients (ascending) and match percentage (descending)
-            filtered_recipes.sort(key=lambda x: (
-                len(x['usedIngredients']) + len(x['missedIngredients']),
-                -x['match_percentage']
-            ))
-            
-            return self.rank_recipes(filtered_recipes)
-            
+                # Parse recipe text into structured format
+                recipe = self._parse_recipe(recipe_text, idx + 1)
+                if recipe:
+                    recipes.append(recipe)
+
+            return recipes
+
         except Exception as e:
-            return f"Error searching recipes: {str(e)}"
-    
-    def suggest_substitutions(self, ingredient: str) -> List[str]:
-        """
-        Suggest possible substitutions for missing ingredients
-        """
+            print(f"Error generating recipes: {e}")
+            return []
+
+    def _parse_recipe(self, recipe_text, recipe_id):
+        """Parse generated recipe text into structured format"""
         try:
-            endpoint = f"{self.base_url}/substitutes"
+            # Split into sections
+            sections = recipe_text.split('\n\n')
             
-            params = {
-                "apiKey": self.api_key,
-                "ingredientName": ingredient
+            # Extract title (first line)
+            title = sections[0].strip()
+            if 'Ingredients:' in title:
+                title = title.split('Ingredients:')[0].strip()
+
+            # Extract ingredients
+            ingredients = []
+            instructions = []
+            
+            for section in sections[1:]:
+                if 'Ingredients:' in section:
+                    # Get ingredients list
+                    ingredients_text = section.split('Ingredients:')[1]
+                    ingredients = [
+                        ing.strip() 
+                        for ing in ingredients_text.split('\n') 
+                        if ing.strip()
+                    ]
+                elif 'Instructions:' in section:
+                    # Get cooking instructions
+                    instructions_text = section.split('Instructions:')[1]
+                    instructions = [
+                        inst.strip() 
+                        for inst in instructions_text.split('\n') 
+                        if inst.strip()
+                    ]
+
+            return {
+                'id': recipe_id,
+                'title': title,
+                'ingredients': ingredients,
+                'instructions': instructions
             }
-            
-            response = requests.get(endpoint, params=params)
-            substitutes = response.json()
-            
-            return substitutes.get('substitutes', [])
-            
+
         except Exception as e:
-            return f"Error finding substitutions: {str(e)}"
-            
-    def rank_recipes(self, recipes: List[Dict]) -> List[Dict]:
-        """Rank recipes by simplicity and match percentage"""
-        return sorted(
-            recipes,
-            key=lambda x: (
-                len(x['usedIngredients']) + len(x['missedIngredients']),
-                -x['match_percentage']
-            )
-        )
-        
-    def analyze_nutrition(self, recipe_id: int) -> Dict:
-        """Analyze nutritional content of a recipe"""
-        try:
-            endpoint = f"{self.base_url}/{recipe_id}/nutritionWidget.json"
-            
-            params = {
-                "apiKey": self.api_key
-            }
-            
-            response = requests.get(endpoint, params=params)
-            return response.json()
-            
-        except Exception as e:
-            return f"Error analyzing nutrition: {str(e)}" 
+            print(f"Error parsing recipe: {e}")
+            return None 

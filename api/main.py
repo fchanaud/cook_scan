@@ -5,6 +5,7 @@ from typing import List
 import os
 
 from database.database import SessionLocal, engine
+from database import models
 from database.models import Base
 import schemas
 from main import CookScanApp
@@ -22,7 +23,7 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"],  # Allow all origins in development
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -48,24 +49,11 @@ async def analyze_images(files: List[UploadFile] = File(...)):
                 buffer.write(content)
             temp_paths.append(temp_path)
             
-        # Initialize CookScan app
+        # Initialize CookScan app and process images
         cook_scan_app = CookScanApp(Config.OPENAI_API_KEY)
-        results = cook_scan_app.run(temp_paths)
+        recipes = cook_scan_app.run(temp_paths)
         
-        # Save results to database
-        db_recipes = []
-        for recipe in results:
-            db_recipe = models.Recipe(
-                title=recipe['title'],
-                ingredients=recipe['ingredients'],
-                instructions=recipe['instructions'],
-                match_percentage=recipe['match_percentage']
-            )
-            db.add(db_recipe)
-            db_recipes.append(db_recipe)
-        
-        db.commit()
-        return db_recipes
+        return recipes
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -88,4 +76,8 @@ def favorite_recipe(recipe_id: int, db: Session = Depends(get_db)):
         recipe.is_favorite = True
         db.commit()
         return {"message": "Recipe marked as favorite"}
-    return {"error": "Recipe not found"} 
+    return {"error": "Recipe not found"}
+
+@app.get("/health")
+async def health_check():
+    return {"status": "healthy"} 

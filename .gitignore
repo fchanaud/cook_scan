@@ -44,4 +44,10 @@ yarn-error.log*
 
 # OS
 .DS_Store
-Thumbs.db 
+Thumbs.db
+
+# New additions
+.venv
+venv/
+ENV/
+temp_* 

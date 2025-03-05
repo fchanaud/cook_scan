@@ -15,6 +15,7 @@ import {
 } from '@mui/material';
 import CloudUploadIcon from '@mui/icons-material/CloudUpload';
 import DeleteIcon from '@mui/icons-material/Delete';
+import CameraAltIcon from '@mui/icons-material/CameraAlt';
 
 function App() {
   const [selectedFiles, setSelectedFiles] = useState([]);
@@ -67,142 +68,173 @@ function App() {
           );
           setUploadProgress(percentCompleted);
         },
+        timeout: 30000, // 30 second timeout
       });
 
       setRecipes(response.data);
-      setSelectedFiles([]); // Clear files after successful upload
     } catch (error) {
-      console.error('Error uploading images:', error);
+      console.error('Upload error:', error);
       setError(
         error.response?.data?.detail || 
-        error.message || 
-        'Error analyzing images. Please try again.'
+        'Network error. Please check your connection and try again.'
       );
     } finally {
       setLoading(false);
-      setUploadProgress(0);
     }
   };
 
   return (
-    <Container maxWidth="sm">
-      <Box sx={{ 
-        my: 4,
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: 4
-      }}>
-        {/* Header */}
-        <Typography variant="h4" component="h1" align="center">
-          CookScan
-        </Typography>
-
-        {/* Upload Section */}
-        <Box sx={{ width: '100%' }}>
-          <Box
-            sx={{
-              border: '2px dashed #ccc',
-              borderRadius: 2,
-              p: 3,
-              textAlign: 'center',
-              bgcolor: 'background.paper',
-              cursor: 'pointer',
-              '&:hover': {
-                borderColor: 'primary.main',
-              },
-            }}
+    <Container maxWidth="sm" sx={{ py: 2 }}>
+      <Box sx={{ width: '100%' }}>
+        {/* Upload Area */}
+        <Box 
+          sx={{ 
+            p: 2,
+            mb: 2,
+            border: '2px dashed #ccc',
+            borderRadius: 2,
+            textAlign: 'center',
+            backgroundColor: '#f8f8f8'
+          }}
+        >
+          <input
+            type="file"
+            accept="image/*"
+            multiple
+            capture="environment"
+            onChange={handleFileSelect}
+            style={{ display: 'none' }}
+            id="image-input"
+          />
+          <label htmlFor="image-input">
+            <Button
+              variant="contained"
+              component="span"
+              startIcon={<CameraAltIcon />}
+              fullWidth
+              sx={{ mb: 2 }}
+            >
+              Take Photo
+            </Button>
+          </label>
+          <Button
+            variant="outlined"
+            component="label"
+            startIcon={<CloudUploadIcon />}
+            fullWidth
           >
+            Upload Images
             <input
-              accept="image/*"
               type="file"
+              accept="image/*"
               multiple
+              hidden
               onChange={handleFileSelect}
-              style={{ display: 'none' }}
-              id="image-upload"
             />
-            <label htmlFor="image-upload">
-              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 1 }}>
-                <CloudUploadIcon sx={{ fontSize: 48, color: 'primary.main' }} />
-                <Typography>
-                  Drop images here or click to upload
-                </Typography>
-              </Box>
-            </label>
-          </Box>
+          </Button>
+        </Box>
 
-          {/* Selected Files List */}
-          {selectedFiles.length > 0 && (
-            <Stack spacing={1} sx={{ mt: 2 }}>
-              {selectedFiles.map((file, index) => (
-                <Box
-                  key={index}
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    p: 1,
-                    bgcolor: 'background.paper',
-                    borderRadius: 1,
-                  }}
-                >
-                  <Typography noWrap sx={{ flex: 1 }}>
+        {/* Selected Files List */}
+        {selectedFiles.length > 0 && (
+          <Stack spacing={1} sx={{ mb: 2 }}>
+            {selectedFiles.map((file, index) => (
+              <Card key={index} variant="outlined">
+                <CardContent sx={{ 
+                  py: 1, 
+                  px: 2, 
+                  '&:last-child': { pb: 1 },
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between'
+                }}>
+                  <Typography variant="body2" noWrap>
                     {file.name}
                   </Typography>
                   <IconButton 
                     size="small" 
                     onClick={() => handleRemoveFile(index)}
-                    sx={{ color: 'error.main' }}
+                    sx={{ ml: 1 }}
                   >
-                    <DeleteIcon />
+                    <DeleteIcon fontSize="small" />
                   </IconButton>
-                </Box>
-              ))}
-              <Button
-                variant="contained"
-                onClick={handleUpload}
-                disabled={loading}
-                fullWidth
-                sx={{ mt: 2 }}
-              >
-                {loading ? 'Analyzing...' : 'Get Recipes'}
-              </Button>
-            </Stack>
-          )}
+                </CardContent>
+              </Card>
+            ))}
+            <Button
+              variant="contained"
+              onClick={handleUpload}
+              disabled={loading}
+              fullWidth
+              sx={{ mt: 2 }}
+            >
+              Get Recipes
+            </Button>
+          </Stack>
+        )}
 
-          {/* Upload Progress */}
-          {loading && (
-            <Box sx={{ mt: 2 }}>
-              <LinearProgress variant="determinate" value={uploadProgress} />
-              <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 1 }}>
-                {uploadProgress}% - {uploadProgress === 100 ? 'Processing...' : 'Uploading...'}
-              </Typography>
-            </Box>
-          )}
-        </Box>
+        {/* Loading Progress */}
+        {loading && (
+          <Box sx={{ width: '100%', mb: 2 }}>
+            <LinearProgress variant="determinate" value={uploadProgress} />
+            <Typography variant="body2" color="text.secondary" align="center" sx={{ mt: 1 }}>
+              {uploadProgress}% - {uploadProgress === 100 ? 'Processing...' : 'Uploading...'}
+            </Typography>
+          </Box>
+        )}
 
         {/* Recipe Results */}
         {recipes.length > 0 && (
-          <Stack spacing={2} sx={{ width: '100%' }}>
-            <Typography variant="h6" align="center">
+          <Stack spacing={2}>
+            <Typography variant="h6" align="center" sx={{ mb: 2 }}>
               Recipe Suggestions
             </Typography>
             {recipes.map((recipe) => (
-              <Card key={recipe.id} elevation={0} sx={{ borderRadius: 2 }}>
+              <Card 
+                key={recipe.id} 
+                elevation={2} 
+                sx={{ 
+                  borderRadius: 2,
+                  mb: 2
+                }}
+              >
                 <CardContent>
-                  <Typography variant="h6" gutterBottom>
+                  <Typography variant="h6" gutterBottom sx={{ fontSize: '1.1rem' }}>
                     {recipe.title}
                   </Typography>
-                  <Typography variant="body2" color="text.secondary" gutterBottom>
+                  <Typography 
+                    variant="subtitle2" 
+                    color="text.secondary" 
+                    gutterBottom 
+                    sx={{ mt: 2 }}
+                  >
                     Ingredients:
                   </Typography>
                   <Box component="ul" sx={{ pl: 2, mt: 0 }}>
                     {recipe.ingredients.map((ingredient, index) => (
-                      <Typography component="li" key={index} variant="body2">
+                      <Typography 
+                        component="li" 
+                        key={index} 
+                        variant="body2"
+                        sx={{ mb: 0.5 }}
+                      >
                         {ingredient}
                       </Typography>
                     ))}
                   </Box>
+                  {recipe.instructions && (
+                    <>
+                      <Typography 
+                        variant="subtitle2" 
+                        color="text.secondary" 
+                        sx={{ mt: 2 }}
+                      >
+                        Instructions:
+                      </Typography>
+                      <Typography variant="body2" sx={{ mt: 1 }}>
+                        {recipe.instructions}
+                      </Typography>
+                    </>
+                  )}
                 </CardContent>
               </Card>
             ))}
@@ -214,8 +246,13 @@ function App() {
           open={!!error} 
           autoHideDuration={6000} 
           onClose={() => setError(null)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
         >
-          <Alert severity="error" onClose={() => setError(null)}>
+          <Alert 
+            severity="error" 
+            onClose={() => setError(null)}
+            sx={{ width: '100%' }}
+          >
             {error}
           </Alert>
         </Snackbar>
