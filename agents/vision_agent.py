@@ -1,3 +1,4 @@
+from langchain_openai import ChatOpenAI
 from crewai import Agent
 from PIL import Image
 import torch
@@ -7,7 +8,7 @@ from typing import List, Dict
 import numpy as np
 
 class VisionAgent:
-    def __init__(self):
+    def __init__(self, openai_api_key):
         # Initialize CLIP model for ingredient detection
         self.model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14")
         self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
@@ -47,6 +48,13 @@ class VisionAgent:
                 "cinnamon", "cumin", "paprika", "turmeric", "ginger"
             ]
         }
+        
+        self.llm = ChatOpenAI(
+            model="gpt-4-vision-preview",
+            api_key=openai_api_key,
+            max_tokens=1000,
+            temperature=0.7
+        )
         
     def get_tools(self) -> List[Tool]:
         return [
@@ -166,3 +174,76 @@ class VisionAgent:
                     break
                     
         return {k: v for k, v in categorized.items() if v}  # Remove empty categories 
+
+    def analyze_images(self, image_paths):
+        ingredients = []
+        for image_path in image_paths:
+            try:
+                # Load and process image
+                image = Image.open(image_path)
+                ingredients.extend(self._detect_ingredients(image))
+            except Exception as e:
+                print(f"Error processing image {image_path}: {e}")
+                continue
+        
+        return list(set(ingredients))  # Remove duplicates
+
+    def _detect_ingredients(self, image):
+        # Common ingredients to check against
+        common_ingredients = [
+            "tomato", "onion", "garlic", "potato", "carrot", "chicken",
+            "beef", "fish", "rice", "pasta", "lettuce", "cucumber",
+            "pepper", "salt", "olive oil", "butter", "cheese", "egg",
+            "milk", "flour", "sugar", "lemon", "lime", "apple",
+            # Add more ingredients as needed
+        ]
+
+        # Process image for CLIP
+        inputs = self.processor(
+            images=image,
+            text=common_ingredients,
+            return_tensors="pt",
+            padding=True
+        )
+
+        # Get model outputs
+        outputs = self.model(**inputs)
+        logits_per_image = outputs.logits_per_image
+        probs = torch.softmax(logits_per_image, dim=1)
+
+        # Get ingredients with high confidence (>0.5)
+        detected_ingredients = [
+            ingredient for idx, ingredient in enumerate(common_ingredients)
+            if probs[0][idx].item() > 0.5
+        ]
+
+        # Use GPT-4 Vision for additional ingredient detection
+        vision_response = self.llm.invoke(
+            [
+                {
+                    "type": "text",
+                    "text": "What ingredients do you see in this image? List only the ingredients, separated by commas."
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:image/jpeg;base64,{self._image_to_base64(image)}"
+                    }
+                }
+            ]
+        )
+
+        # Combine CLIP and GPT-4 Vision results
+        gpt_ingredients = [
+            ingredient.strip().lower()
+            for ingredient in vision_response.content.split(',')
+        ]
+        
+        return list(set(detected_ingredients + gpt_ingredients))
+
+    def _image_to_base64(self, image):
+        import base64
+        from io import BytesIO
+        buffered = BytesIO()
+        image.save(buffered, format="JPEG")
+        return base64.b64encode(buffered.getvalue()).decode() 

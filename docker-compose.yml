@@ -9,6 +9,8 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgresql://user:password@db:5432/cookscan_db
+    volumes:
+      - model_cache:/opt/models  # Changed to use named volume
     deploy:
       resources:
         limits:
@@ -28,6 +30,9 @@ services:
       - NODE_ENV=development
       - REACT_APP_API_URL=http://localhost:8000
       - REACT_APP_TITLE=CookScan
+    volumes:
+      - ./frontend/src:/app/src  # For hot reloading
+      - /app/node_modules
     env_file:
       - .env
     deploy:
@@ -45,14 +50,15 @@ services:
       - POSTGRES_USER=user
       - POSTGRES_PASSWORD=password
       - POSTGRES_DB=cookscan_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     deploy:
       resources:
         limits:
           memory: 1G
         reservations:
           memory: 512M
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
 
 volumes:
-  postgres_data: 
+  postgres_data:
+  model_cache:  # Added new named volume for models 

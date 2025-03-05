@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Depends
+from fastapi import FastAPI, UploadFile, File, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List
@@ -22,7 +22,7 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
+    allow_origins=["http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -36,17 +36,18 @@ def get_db():
     finally:
         db.close()
 
-@app.post("/analyze-images/", response_model=List[schemas.Recipe])
-async def analyze_images(files: List[UploadFile] = File(...), db: Session = Depends(get_db)):
-    # Save uploaded files temporarily
-    temp_paths = []
+@app.post("/analyze-images/")
+async def analyze_images(files: List[UploadFile] = File(...)):
     try:
+        # Save uploaded files temporarily
+        temp_paths = []
         for file in files:
             temp_path = f"temp_{file.filename}"
             with open(temp_path, "wb") as buffer:
-                buffer.write(await file.read())
+                content = await file.read()
+                buffer.write(content)
             temp_paths.append(temp_path)
-        
+            
         # Initialize CookScan app
         cook_scan_app = CookScanApp(Config.OPENAI_API_KEY)
         results = cook_scan_app.run(temp_paths)
@@ -65,6 +66,9 @@ async def analyze_images(files: List[UploadFile] = File(...), db: Session = Depe
         
         db.commit()
         return db_recipes
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
         
     finally:
         # Clean up temporary files
