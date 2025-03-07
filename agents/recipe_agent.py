@@ -1,90 +1,105 @@
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from langchain_openai import ChatOpenAI
+from database.database import get_supabase
+import logging
+
+logger = logging.getLogger(__name__)
 
 class RecipeAgent:
     def __init__(self, openai_api_key):
-        # Load Recipe1M model and tokenizer
-        self.model_name = "facebook/recipe1m"
-        self.tokenizer = AutoTokenizer.from_pretrained(self.model_name)
-        self.model = AutoModelForCausalLM.from_pretrained(self.model_name)
-        self.model.eval()  # Set to evaluation mode
+        logger.info("Initializing RecipeAgent...")
+        self.llm = ChatOpenAI(
+            model="gpt-4",
+            api_key=openai_api_key,
+            temperature=0.7
+        )
+        self.supabase = get_supabase()
 
     def suggest_recipes(self, ingredients):
         try:
-            # Format ingredients for input
+            logger.info(f"Generating recipes for ingredients: {ingredients}")
+            # Format ingredients for prompt
             ingredients_text = ", ".join(ingredients)
-            input_text = f"Ingredients: {ingredients_text}\nRecipe:"
             
-            # Tokenize input
-            inputs = self.tokenizer(input_text, return_tensors="pt", padding=True)
+            # Create prompt for recipe generation
+            prompt = [
+                {
+                    "role": "system",
+                    "content": """You are a creative chef. Generate a recipe using the provided ingredients.
+                    Format the recipe with a title and clear instructions.
+                    Keep it concise but detailed enough to follow."""
+                },
+                {
+                    "role": "user",
+                    "content": f"Create a recipe using these ingredients: {ingredients_text}"
+                }
+            ]
             
-            # Generate recipe
-            with torch.no_grad():
-                outputs = self.model.generate(
-                    inputs["input_ids"],
-                    max_length=512,
-                    num_return_sequences=3,
-                    temperature=0.7,
-                    do_sample=True,
-                    top_p=0.95
-                )
-
-            # Process and format recipes
+            # Generate recipes
             recipes = []
-            for idx, output in enumerate(outputs):
-                recipe_text = self.tokenizer.decode(output, skip_special_tokens=True)
-                
-                # Parse recipe text into structured format
-                recipe = self._parse_recipe(recipe_text, idx + 1)
+            for _ in range(3):  # Generate 3 different recipes
+                response = self.llm.invoke(prompt)
+                recipe = self._parse_recipe(response.content)
                 if recipe:
-                    recipes.append(recipe)
+                    # Store recipe in Supabase
+                    stored_recipe = self._store_recipe(recipe, ingredients)
+                    recipes.append(stored_recipe)
 
+            logger.info(f"Generated {len(recipes)} recipes")
             return recipes
 
         except Exception as e:
-            print(f"Error generating recipes: {e}")
+            logger.error(f"Error generating recipes: {e}", exc_info=True)
             return []
 
-    def _parse_recipe(self, recipe_text, recipe_id):
+    def _parse_recipe(self, recipe_text):
         """Parse generated recipe text into structured format"""
         try:
-            # Split into sections
-            sections = recipe_text.split('\n\n')
+            # Split into lines
+            lines = recipe_text.strip().split('\n')
             
-            # Extract title (first line)
-            title = sections[0].strip()
-            if 'Ingredients:' in title:
-                title = title.split('Ingredients:')[0].strip()
-
-            # Extract ingredients
-            ingredients = []
-            instructions = []
+            # First non-empty line is title
+            title = next(line.strip() for line in lines if line.strip())
             
-            for section in sections[1:]:
-                if 'Ingredients:' in section:
-                    # Get ingredients list
-                    ingredients_text = section.split('Ingredients:')[1]
-                    ingredients = [
-                        ing.strip() 
-                        for ing in ingredients_text.split('\n') 
-                        if ing.strip()
-                    ]
-                elif 'Instructions:' in section:
-                    # Get cooking instructions
-                    instructions_text = section.split('Instructions:')[1]
-                    instructions = [
-                        inst.strip() 
-                        for inst in instructions_text.split('\n') 
-                        if inst.strip()
-                    ]
+            # Rest is instructions
+            instructions = '\n'.join(
+                line.strip() 
+                for line in lines[1:] 
+                if line.strip()
+            )
 
             return {
-                'id': recipe_id,
                 'title': title,
-                'ingredients': ingredients,
                 'instructions': instructions
             }
 
         except Exception as e:
-            print(f"Error parsing recipe: {e}")
-            return None 
+            logger.error(f"Error parsing recipe: {e}", exc_info=True)
+            return None
+
+    def _store_recipe(self, recipe, ingredients):
+        """Store recipe in Supabase database"""
+        try:
+            # Prepare recipe data
+            recipe_data = {
+                'name': recipe['title'],
+                'ingredients': ingredients,
+                'instructions': recipe['instructions']
+            }
+
+            # Insert into recipes table
+            result = self.supabase.table('recipes').insert(recipe_data).execute()
+            
+            # Return stored recipe with database ID
+            if result.data:
+                stored_recipe = result.data[0]
+                return {
+                    'id': stored_recipe['id'],
+                    'title': stored_recipe['name'],
+                    'ingredients': stored_recipe['ingredients'],
+                    'instructions': stored_recipe['instructions']
+                }
+            return recipe
+
+        except Exception as e:
+            logger.error(f"Error storing recipe: {e}", exc_info=True)
+            return recipe 

@@ -1,15 +1,23 @@
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
+from supabase import create_client, Client
 import os
+from dotenv import load_dotenv
 
-# Get database URL from environment variable or use default
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://user:password@db:5432/recipe_db"
-)
+# Load environment variables
+load_dotenv()
 
-engine = create_engine(DATABASE_URL)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# Get Supabase credentials from environment variables
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY")
 
-Base = declarative_base() 
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError(
+        "Missing Supabase configuration. "
+        "Please ensure SUPABASE_URL and SUPABASE_ANON_KEY are set in your .env file."
+    )
+
+# Initialize Supabase client
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# Function to get Supabase client
+def get_supabase() -> Client:
+    return supabase 

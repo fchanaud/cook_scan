@@ -3,6 +3,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from typing import List
 import os
+import datetime
+import json
+import traceback
 
 from database.database import SessionLocal, engine
 from database import models
@@ -10,6 +13,7 @@ from database.models import Base
 import schemas
 from main import CookScanApp
 from config import Config
+from agents.vision_agent import VisionAgent
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -39,30 +43,65 @@ def get_db():
 
 @app.post("/analyze-images/")
 async def analyze_images(files: List[UploadFile] = File(...)):
+    print("\n=== Starting Image Analysis ===")
+    print(f"🕒 {datetime.datetime.now()}")
+    temp_paths = []
     try:
         # Save uploaded files temporarily
-        temp_paths = []
+        print(f"📁 Number of files received: {len(files)}")
         for file in files:
+            print(f"📝 Processing file: {file.filename}")
             temp_path = f"temp_{file.filename}"
             with open(temp_path, "wb") as buffer:
                 content = await file.read()
+                print(f"📦 File size: {len(content)} bytes")
                 buffer.write(content)
             temp_paths.append(temp_path)
+            print(f"💾 Saved to temporary path: {temp_path}")
+        
+        # Analyze image
+        print("\n🔍 Starting Vision Analysis...")
+        vision_agent = VisionAgent(Config.OPENAI_API_KEY)
+        ingredients = await vision_agent.detect_ingredients(temp_paths)
+        print("\n🥕 Detected ingredients:")
+        if ingredients:
+            for i, ingredient in enumerate(ingredients, 1):
+                print(f"  {i}. {ingredient}")
             
-        # Initialize CookScan app and process images
-        cook_scan_app = CookScanApp(Config.OPENAI_API_KEY)
-        recipes = cook_scan_app.run(temp_paths)
+            print("\n👨‍🍳 Generating recipe...")
+            recipe_agent = CookScanApp()
+            recipe = await recipe_agent.generate_recipe(ingredients)
+            print("\n📖 Generated recipe:")
+            print(f"{recipe}")
+        else:
+            print("❌ No ingredients detected!")
+            recipe = None
         
-        return recipes
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-        
-    finally:
         # Clean up temporary files
+        print("\n🧹 Cleaning up temporary files...")
         for temp_path in temp_paths:
             if os.path.exists(temp_path):
                 os.remove(temp_path)
+        
+        response_data = {
+            "success": True,
+            "ingredients_count": len(ingredients) if ingredients else 0,
+            "ingredients": ingredients if ingredients else [],
+            "recipe": recipe,
+            "message": "No ingredients detected" if not ingredients else "Ingredients detected successfully"
+        }
+        print(f"\n✅ Analysis complete. Response data:")
+        print(json.dumps(response_data, indent=2))
+        return response_data
+        
+    except Exception as e:
+        print(f"\n❌ Error in analyze_images: {str(e)}")
+        print(f"Traceback: {traceback.format_exc()}")
+        # Clean up temporary files in case of error
+        for temp_path in temp_paths:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/recipes/", response_model=List[schemas.Recipe])
 def get_recipes(skip: int = 0, limit: int = 10, db: Session = Depends(get_db)):

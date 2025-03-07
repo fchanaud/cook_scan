@@ -1,18 +1,39 @@
-from langchain_openai import ChatOpenAI
+from transformers import AutoProcessor, LlamaForCausalLM
 from PIL import Image
-import base64
-from io import BytesIO
+import torch
+import logging
+import os
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 class VisionAgent:
-    def __init__(self, openai_api_key):
-        self.llm = ChatOpenAI(
-            model="gpt-4-vision-preview",
-            api_key=openai_api_key,
-            max_tokens=1000,
-            temperature=0.7
+    def __init__(self, openai_api_key):  # We'll keep the param for compatibility
+        logger.info("Initializing VisionAgent with Llama Vision model...")
+        self.model_name = "meta-llama/Llama-3.2-11B-Vision-Instruct"
+        self.hf_token = os.getenv("HUGGIN_FACE_TOKEN")
+        
+        if not self.hf_token:
+            raise ValueError("HUGGIN_FACE_TOKEN not found in environment variables")
+            
+        # Initialize model and processor
+        self.processor = AutoProcessor.from_pretrained(
+            self.model_name,
+            token=self.hf_token
         )
+        self.model = LlamaForCausalLM.from_pretrained(
+            self.model_name,
+            token=self.hf_token,
+            device_map="auto",
+            torch_dtype=torch.float16
+        )
+        self.model.eval()
 
     def analyze_images(self, image_paths):
+        logger.info(f"Analyzing images: {image_paths}")
         """Analyze multiple images to detect ingredients"""
         all_ingredients = set()
         
@@ -22,47 +43,60 @@ class VisionAgent:
                 image = Image.open(image_path)
                 ingredients = self._detect_ingredients(image)
                 all_ingredients.update(ingredients)
+                logger.info(f"Detected ingredients from {image_path}: {ingredients}")
             except Exception as e:
-                print(f"Error processing image {image_path}: {e}")
+                logger.error(f"Error processing image {image_path}: {e}", exc_info=True)
                 continue
         
-        return list(all_ingredients)
+        result = list(all_ingredients)
+        logger.info(f"Final ingredients list: {result}")
+        return result
 
     def _detect_ingredients(self, image):
-        """Detect ingredients in a single image using GPT-4 Vision"""
+        """Detect ingredients in a single image using Llama Vision"""
         try:
-            # Convert image for API
-            buffered = BytesIO()
-            image.save(buffered, format="JPEG")
-            image_base64 = base64.b64encode(buffered.getvalue()).decode()
+            # Prepare prompt
+            prompt = """Analyze this food image and list the main ingredients you can see.
+            Return ONLY a comma-separated list of ingredients.
+            Example format: beef, potatoes, carrots
+            Be specific but concise.
+            For this dish, list the ingredients you can clearly identify:"""
 
-            # Create prompt for GPT-4 Vision
-            response = self.llm.invoke(
-                [
-                    {
-                        "type": "text",
-                        "text": """List all food ingredients you can identify in this image. 
-                        Only list the ingredients, separated by commas. 
-                        Be specific but concise. 
-                        If you're not sure about an ingredient, don't include it."""
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {
-                            "url": f"data:image/jpeg;base64,{image_base64}"
-                        }
-                    }
-                ]
-            )
+            # Process image and text
+            inputs = self.processor(
+                text=prompt,
+                images=image,
+                return_tensors="pt"
+            ).to(self.model.device)
 
-            # Process response
+            # Generate response
+            with torch.no_grad():
+                outputs = self.model.generate(
+                    **inputs,
+                    max_new_tokens=100,
+                    num_return_sequences=1,
+                    temperature=0.7,
+                    do_sample=True
+                )
+
+            # Decode response
+            response = self.processor.decode(outputs[0], skip_special_tokens=True)
+            logger.info(f"Raw model response: {response}")
+
+            # Extract ingredients list from response
+            # Remove the prompt from response and clean up
+            response_text = response.split(prompt)[-1].strip()
+            
+            # Process ingredients
             ingredients = [
                 ingredient.strip().lower()
-                for ingredient in response.content.split(',')
+                for ingredient in response_text.split(',')
+                if ingredient.strip()
             ]
             
+            logger.info(f"Processed ingredients: {ingredients}")
             return ingredients
 
         except Exception as e:
-            print(f"Error in ingredient detection: {e}")
+            logger.error(f"Error in ingredient detection: {str(e)}", exc_info=True)
             return [] 
